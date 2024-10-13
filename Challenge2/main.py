@@ -11,12 +11,6 @@ class MemoryUnit():
 
     def Info(self):
         return self.identifier
-    
-    def Defragmenter(self):
-        for i in self.deleted:
-            self.memory.pop(i)
-        self.size -= len(self.deleted)
-        self.deleted.clear()
 
     def WriteObject(self, object):
         if self.size < self.maxSize:
@@ -30,10 +24,7 @@ class MemoryUnit():
             return index
         else:
             raise("Error: Memory overflow")
-    
-    def EditObject(self, object, pointer):
-        self.memory[pointer] = object
-    
+        
     def ReadObject(self, pointer):
         return self.memory[pointer]
 
@@ -47,7 +38,7 @@ class Literal():
     def Info(self):
         return self.descriptor
     
-    def ReadValue(self):
+    def GetValue(self):
         return self.value
 
 class Integer(Literal):
@@ -57,6 +48,12 @@ class Integer(Literal):
             self.descriptor = "<Integer>"
         else:
             raise("Error: Cannot assign non-integer value to integer")
+        
+    def Increment(self):
+        self.value += 1
+    
+    def Decrement(self):
+        self.value -= 1
 
 # Data structures (for now just variables)
 
@@ -67,11 +64,13 @@ class Variable():
         self.pointer = memoryUnit.WriteObject(data)
 
     def Info(self):
-        return "{0} object at index {1} of {2} with value {3}".format(self.memoryUnit.ReadObject(self.pointer).Info(), self.pointer, self.memoryUnit.Info(), self.memoryUnit.ReadObject(self.pointer).ReadValue())
+        return "{0} object at index {1} of {2} with value {3}".format(self.memoryUnit.ReadObject(self.pointer).Info(), self.pointer, self.memoryUnit.Info(), self.memoryUnit.ReadObject(self.pointer).GetValue())
+
+    def GetObject(self):
+        return self.memoryUnit.ReadObject(self.pointer)
     
-## mainMemory = MemoryUnit("system memory", 10000)
-## number = Variable("number", Integer(6), mainMemory)
-## print(number.Info())
+    def GetValue(self):
+        return self.GetObject().GetValue()
 
 # Front end
 # Highest level interpreter class
@@ -80,12 +79,95 @@ class Interpreter():
     def __init__(self, filepath):
         self.filepath = filepath
 
-        with open(filepath, "r") as fileObj:
-            self.code = [i.replace("\n", "") for i in fileObj.readlines()]
-
         self.control = 0
+        self.dataStructures = {}
+        self.lookup = {
+            "clear": self.Clear,
+            "incr": self.Incr,
+            "decr": self.Decr,
+            "while": self.While,
+            "end": self.End
+        }
+        self.controlFlows = ["while"]
+
+        with open(filepath, "r") as fileObj:
+            self.rawCode = [i.replace(";\n", "").replace(";", "").strip() for i in fileObj.readlines()]
+
+        self.splitCode = []
+        for i in self.rawCode:
+            splitPoint = i.find(" ")
+            opcode = i[:splitPoint]
+            operands = i[splitPoint + 1:]
+            if operands == "end":
+                self.splitCode.append([operands, ""])
+            else:
+                self.splitCode.append([opcode, operands])
+
+        self.linkLines = {}
+        for i in range(len(self.splitCode)):
+            if self.splitCode[i][0] not in self.controlFlows and self.splitCode[i][0] != "end":
+                self.linkLines[i] = i + 1
+            else:
+                if self.splitCode[i][0] in self.controlFlows:
+                    counter = 1
+                    j = i + 1
+                    while counter != 0:
+                        if self.splitCode[j][0] in self.controlFlows:
+                            counter += 1
+                        elif self.splitCode[j][0] == "end":
+                            counter -= 1
+                        j += 1
+                    self.linkLines[i] = j
+                else:
+                    counter = 1
+                    j = i - 1
+                    while counter != 0:
+                        if self.splitCode[j][0] == "end":
+                            counter += 1
+                        elif self.splitCode[j][0] in self.controlFlows:
+                            counter -= 1
+                        j -= 1
+                    self.linkLines[i] = j + 1
+    
+    def Clear(self, operands):
+        self.dataStructures[operands] = Variable(operands, Integer(0), mainMemory)
+        return False
+
+    def Incr(self, operands):
+        obj = self.dataStructures[operands]
+        obj.GetObject().Increment()
+        return False
+
+    def Decr(self, operands):
+        obj = self.dataStructures[operands]
+        obj.GetObject().Decrement()
+        return False
+
+    def While(self, operands):
+        varName = operands[:operands.find(" ")]
+        testValue = self.dataStructures[varName].GetObject().GetValue()
+        if testValue == 0:
+            return False
+        else:
+            return True
+
+    def End(self, operands):
+        return False
 
     def Execute(self):
-        pass # Determine if indents matter
+        while self.control != len(self.splitCode):
+            currentLine = self.splitCode[self.control]
+            routine = self.lookup[currentLine[0]]
+            increment = routine(currentLine[1])
+            if not increment:
+                self.control = self.linkLines[self.control]
+            else:
+                self.control += 1
 
-# test = Interpreter("./example.txt")
+            for i in self.dataStructures.keys():
+                print(str(i) + ": " + str(self.dataStructures[i].GetValue()), end = " ")
+            print()
+
+mainMemory = MemoryUnit("system memory", 10000)
+test = Interpreter("./example2.txt")
+test.Execute()
